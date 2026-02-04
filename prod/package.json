@@ -1,0 +1,19 @@
+{
+  "name": "Dataviz node server",
+  "version": "1.0.0",
+  "main": "serveur.js",
+  "scripts": {
+    "server": "nodemon --watch server --inspect serveur.js"
+  },
+  "author": "Marilyne Summo",
+  "license": "ISC",
+  "dependencies": {
+    "body-parser": "^1.19.0",
+    "express": "^4.17.1",
+    "socket.io": "^4.1.2"
+  },
+  "devDependencies": {
+    "multer": "^2.0.2",
+    "nodemon": "^2.0.22"
+  }
+}

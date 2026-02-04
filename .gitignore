@@ -1,0 +1,7 @@
+# Ignorer tout le contenu du dossier public/data
+data/*
+copie/*
+logs/*
+prod/node_modules/*
+prod/tmp/*
+prod/server.log
