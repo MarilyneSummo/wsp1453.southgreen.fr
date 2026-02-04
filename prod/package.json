@@ -1,5 +1,5 @@
 {
-  "name": "Dataviz node server",
+  "name": "dataviz_node_server",
   "version": "1.0.0",
   "main": "serveur.js",
   "scripts": {
