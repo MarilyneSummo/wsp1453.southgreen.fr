@@ -23,4 +23,8 @@ function logToFile(message, socketId = 'unknown') {
     }
 }
 
-module.exports = { logToFile };
+function getCurrentTimestamp() {
+    const now = new Date();
+    return now.toLocaleString(); // Format: "jj/mm/aaaa, hh:mm:ss"
+}
+module.exports = { logToFile, getCurrentTimestamp };
