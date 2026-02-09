@@ -2,31 +2,9 @@ const fs = require('fs');
 const bodyParser = require("body-parser");
 const path = require('path');
 
-// Fonction pour logger à la fois dans la console et dans un fichier
-function logToFile(message, socketId = 'unknown') {
-    try {
-        // Convertit TOUT en string safe
-        let safeMessage = message;
-        if (message === null || message === undefined) {
-            safeMessage = '[null/undefined]';
-        } else if (typeof message === 'object') {
-            safeMessage = JSON.stringify(message, (key, value) => 
-                typeof value === 'bigint' ? value.toString() + 'n' : value
-            ).slice(0, 1000); // Limite à 1000 chars
-        } else {
-            safeMessage = String(message);
-        }
-        
-        const timestamp = new Date().toISOString();
-        const logLine = `[${timestamp}] [${socketId}] ${safeMessage}\n`;
-        
-        fs.appendFileSync('server.log', logLine);
-        console.log(logLine.trim()); // Aussi en console
-        
-    } catch (error) {
-        console.error('ERREUR logToFile:', error.message);
-    }
-}
+// Importation de la fonction de logging
+const { logToFile } = require('./utils/logger');
+
 
 var app = require('express')();
 var https = require('https');
