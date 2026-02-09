@@ -104,6 +104,7 @@ function assignUploadId(req, res, next) {
 
 // Configuration de multer pour gérer les fichiers
 const multer = require('multer'); //upload des fichiers
+const { log } = require('console');
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
         cb(null, '/opt/www/synflow.southgreen.fr/prod/tmp/toolkit_run/');
@@ -127,8 +128,8 @@ app.post('/upload', assignUploadId, upload.any(), (req, res) => {
 
     const params = req.body;
 
-    logToFile(`Fichiers uploadés: ${JSON.stringify(req.files, null, 2)}`);
-    logToFile('Paramètres texte:', params);
+    logToFile("Fichiers uploadés:", JSON.stringify(uploadedFiles, null, 2));
+    logToFile('Params:', JSON.stringify(params, null, 2));
 
     res.json({
         message: 'Fichiers et paramètres envoyés avec succès',
@@ -247,19 +248,40 @@ io.on('connection', socket => {
         // |  `--'  | |  |     /  _____  \  |  `----.
         //  \______/  | _|    /__/     \__\ |_______|
         if(serviceData.service == "opal"){
+
+            // Validation des paramètres pour éviter les injections de commandes
+            function isSafeValue(value) {
+                if (typeof value !== 'string' || value.length > 100 || value.length < 1) return false;
+                // Métacaractères shell bloqués
+                const dangerous = [';', '|', '&', '$', '`', '>', '<', '(', ')', '[', ']', '{', '}', '\\', '"', "'"];
+                if (dangerous.some(char => value.includes(char))) return false;
+                // Noms de fichiers suspects
+                if (value.match(/[.*]{3,}/) || value.includes('..')) return false;  // ... ou ../
+                return true;
+            }
+
+            Object.keys(params || {}).forEach(key => {
+                if (!isSafeValue(params[key])) {
+                    delete params[key];  // Supprime les valeurs dangereuses
+                    logToFile(`Paramètre supprimé pour sécurité : ${key}`, socket.id);
+                }
+            });
+
+
             // Fonction pour construire la commande de lancement Opal
-            function buildOpalLaunchCommand(formData, uploadedFiles, params) {
-                const { url, action, arguments: argmts } = formData;
+            function buildOpalLaunchCommand(serviceData, uploadedFiles, params) {
+                const { url, action, arguments: argmts } = serviceData;
                 const inputs = argmts.inputs;
                 if (!inputs) {
                     throw new Error("Les 'inputs' ne sont pas définis pour ce service.");
                 }
-                let commandArgs = `-r ${action} -l ${url}`;
-                let aArgs = "";  // Les arguments pour -a
-                let fileArgs = "";  // Les fichiers qui seront passés avec -f
-                // Parcourir les inputs
+
+                //Construire -a en chaine unique pour Opal
+                let aArgs = "";
+                let filePaths = [];  // Tableau des chemins pour -f
+
                 inputs.forEach(input => {
-                    logToFile("Traitement input:", input, socket.id);
+                    logToFile(`Traitement de l'input : ${input.name} de type ${input.type} avec flag ${input.flag}`, socket.id);
                     if (input.flag) {
                         if (input.type !== "file" && input.type !== "file[]") {
                             const value = params[input.name];
@@ -270,40 +292,52 @@ io.on('connection', socket => {
                     }
                     if (input.type === "file" || input.type === "file[]") {
                         const matchingFiles = uploadedFiles.filter(file => file.fieldname === input.name);
-                        logToFile(`Fichiers trouvés pour ${input.name}:`, matchingFiles, socket.id);
                         matchingFiles.forEach(file => {
                             if (file && file.path) {
-                                // Ajout du chemin complet au bloc -f
-                                fileArgs += ` -f ${file.path}`;
-                                // Ajout du nom de fichier avec le flag au bloc -a
+                                filePaths.push(file.path);  // Collecte des chemins
                                 const fileName = path.basename(file.path);
                                 aArgs += ` ${input.flag} ${fileName}`;
                             }
                         });
                     }
                 });
-                // Ajout du bloc -a
 
-                if (aArgs) {
-                    commandArgs += ` -a "${aArgs.trim()}"`;
+                // Construire tableau args pour execFile
+                const args = [
+                    '-r', action,
+                    '-l', url
+                ];
+
+                if (aArgs.trim()) {
+                    args.push('-a', aArgs.trim());  // ← Chaîne UNIQUE pour -a
                 }
-                // Ajout du bloc -f
-                commandArgs += fileArgs;
-                // Retourner la commande complète
-                return `python2 /opt/OpalPythonClient/opal-py-2.4.1/GenericServiceClient.py ${commandArgs.trim()}`;
+
+                // Ajouter TOUS les -f à la fin
+                filePaths.forEach(filePath => {
+                    args.push('-f', filePath);
+                });
+
+                return {
+                    binary: 'python2',
+                    args: ['/opt/OpalPythonClient/opal-py-2.4.1/GenericServiceClient.py', ...args]
+                };
             }
-            // Générer la commande de lancement
-            launchCommand = buildOpalLaunchCommand(serviceData, uploadedFiles, params);
-            logToFile(`Commande générée : ${launchCommand}`, socket.id);
-            socket.emit('consoleMessage', launchCommand);
+
+
+            // Générer la commande
+            const launchInfo = buildOpalLaunchCommand(serviceData, uploadedFiles, params);
+
             // __________   ___  _______   ______
             // |   ____\  \ /  / |   ____| /      |
             // |  |__   \  V  /  |  |__   |  ,----'
             // |   __|   >   <   |   __|  |  |
             // |  |____ /  .  \  |  |____ |  `----.
             // |_______/__/ \__\ |_______| \______|
-            // Exécuter la commande
-            exec(launchCommand, (error, stdout, stderr) => {
+            // Exécution sécurisée
+            const { execFile } = require('child_process');
+            execFile(launchInfo.binary, launchInfo.args, (error, stdout, stderr) => {
+                logToFile(`Commande générée : ${launchInfo.binary} ${launchInfo.args.join(' ')}`, socket.id);
+                socket.emit('consoleMessage', `${launchInfo.binary} ${launchInfo.args.join(' ')}`);
 
                 if (error) {
                     logToFile(`Erreur d'exécution : ${error}`, socket.id);
@@ -323,6 +357,7 @@ io.on('connection', socket => {
 
                     //verifie le fichier de log pour récupérer les sortie quand elle sont disponibles.
                     const logURL = 'http://io-biomaj.meso.umontpellier.fr:8080/opal-jobs/'+ jobId+'/stdout.txt';
+                    logToFile(`URL du log à surveiller : ${logURL}`, socket.id);
 
                     //revoie toolkitAnalysisDir au client pour générer une url d'accès aux resultats
                     socket.emit('toolkitPath', toolkitAnalysisDir);
