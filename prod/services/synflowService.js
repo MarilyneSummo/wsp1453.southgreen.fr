@@ -26,31 +26,71 @@ const storage = multer.diskStorage({
     },
     filename: function (req, file, cb) {
         const prefix = req.uploadId || Date.now();
-        cb(null, prefix + "_" + file.originalname);
+        
+        //Sanitise originalname
+        let safeName = path.basename(file.originalname);  // enlève /../
+        safeName = safeName.replace(/[^a-zA-Z0-9_\-\.]/g, '_');  // remplace caractères dangereux
+        
+        //Extension préservée mais sûre
+        const ext = path.extname(safeName);
+        const name = path.basename(safeName, ext).substring(0, 50);  // max 50 chars
+        
+        cb(null, `${prefix}_${name}${ext}`);
     }
 });
-const upload = multer({ storage: storage });
+
+const upload = multer({ 
+    storage: storage,
+    limits: {
+        fileSize: 500 * 1024 * 1024,  // 500MB max
+        files: 20,                    // max 20 fichiers
+        fieldSize: 10 * 1024          // 10KB max champ texte
+    },
+    fileFilter: (req, file, cb) => {
+        //Seulement tes extensions
+        const allowed = /\.(out|bed|anchors|fasta|fastq|gff|json)$/i;
+        if (allowed.test(file.originalname)) {
+            cb(null, true);
+        } else {
+			logToFile(`Rejet fichier ${file.originalname} type ${file.mimetype}`, req.uploadId);
+            cb(new Error(`File type ${file.mimetype} not allowed`), false);
+        }
+    }
+});
 
 // Route POST /upload Synflow
 uploadRouter.post('/upload', assignUploadId, upload.any(), (req, res) => {
-    const uploadedFiles = req.files.map(file => ({
-        fieldname: file.fieldname,
-        originalname: file.originalname,// nom original utile pour mapping
-        filename: file.filename,// nom stocké avec prefix
-        path: file.path
-    }));
+    //Vérifie paths finaux
+    const uploadedFiles = req.files.map(file => {
+        const resolvedPath = path.resolve(file.path);
+        if (!resolvedPath.startsWith(toolkitWorkingPath)) {
+            fs.unlinkSync(file.path);  // Supprime fichier suspect
+            return null;
+        }
+        return {
+            fieldname: file.fieldname,
+            originalname: file.originalname,
+            filename: file.filename,
+            path: file.path,
+            size: file.size
+        };
+    }).filter(Boolean);  // Enlève fichiers suspects
 
     const params = req.body;
-
+    
+    //Log + réponse
     logToFile("Fichiers uploadés:", JSON.stringify(uploadedFiles, null, 2));
     logToFile('Params:', JSON.stringify(params, null, 2));
-
+	
     res.json({
-        message: 'Fichiers et paramètres envoyés avec succès',
+        success: true,
+        message: 'Fichiers envoyés avec succès',
         files: uploadedFiles,
-        params: params
+        params: params,
+        rejected: req.files.length - uploadedFiles.length
     });
 });
+
 
 
 module.exports = {
