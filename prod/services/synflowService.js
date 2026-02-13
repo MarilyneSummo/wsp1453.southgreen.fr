@@ -1,5 +1,5 @@
 const fs = require('fs');
-const { exec, execFile, spawn } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const path = require('path');
 const http = require('http');
 const https = require('https');
@@ -75,6 +75,35 @@ function validateFileContent(filePath, originalName) {
     return true;
 }
 
+function downloadFile(outputFileUrl, destPath, cb) {
+  try {
+    const urlObj = new URL(outputFileUrl);
+    const lib = urlObj.protocol === 'https:' ? https : http;
+
+    const fileStream = fs.createWriteStream(destPath);
+
+    const req = lib.get(outputFileUrl, res => {
+      if (res.statusCode !== 200) {
+        fileStream.close();
+        fs.unlink(destPath, () => {});
+        return cb(new Error(`HTTP ${res.statusCode} ${res.statusMessage}`));
+      }
+
+      res.pipe(fileStream);
+      fileStream.on('finish', () => {
+        fileStream.close(cb);
+      });
+    });
+
+    req.on('error', err => {
+      fileStream.close();
+      fs.unlink(destPath, () => {});
+      cb(err);
+    });
+  } catch (err) {
+    cb(err);
+  }
+}
 
 // Configuration multer Synflow
 const storage = multer.diskStorage({
@@ -365,75 +394,77 @@ module.exports = {
     });
   },
 
-  waitForOutputFiles(socket, logURL, outputExtensions, jobId, toolkitAnalysisDir) {
-    let lastLogLength = 0;
-    
-    function checkLog() {
-      const urlObj = urlModule.parse(logURL);
-      const lib = urlObj.protocol === 'https:' ? https : http;
-      
-      lib.get(logURL, res => {
-        let data = '';
-        res.on('data', chunk => data += chunk);
-        res.on('end', () => {
-          if (res.statusCode === 404) {
-            setTimeout(checkLog, 500);
-            return;
-          }
-          
-          if (data.length > lastLogLength) {
-            const newContent = data.substring(lastLogLength);
-            lastLogLength = data.length;
-            newContent.split('\n').forEach(line => {
-              if (line.trim() !== '') {
-                logToFile(`${line}`, socket.id);
-                socket.emit('consoleMessage', `${line}`);
-              }
-            });
-          }
+	waitForOutputFiles(socket, logURL, outputExtensions, jobId, toolkitAnalysisDir) {
+		let lastLogLength = 0;
 
-          const outputSection = data.split('\n').find(line => 
-            line.includes("Checking expected output files:")
-          );
+		function checkLog() {
+			const urlObj = urlModule.parse(logURL);
+			const lib = urlObj.protocol === 'https:' ? https : http;
 
-          if (outputSection) {
-            const fileLines = data.split('\n').filter(line =>
-              outputExtensions.some(ext => line.trim().endsWith(ext))
-            );
+			lib.get(logURL, res => {
+				let data = '';
+				res.on('data', chunk => data += chunk);
+				res.on('end', () => {
+					if (res.statusCode === 404) {
+						setTimeout(checkLog, 500);
+						return;
+					}
 
-            logToFile(`Fichiers trouvés: ${fileLines}`, socket.id);
-            
-            if (fileLines.length > 0) {
-              fileLines.forEach((fileName, index) => {
-                fileName = fileName.trim();
-                const outputFileUrl = `http://io-biomaj.meso.umontpellier.fr:8080/opal-jobs/${jobId}/${fileName}`;
-                const newFileName = `${toolkitAnalysisDir}${fileName}`;
-                const downloadCommand = `curl -o ${newFileName} ${outputFileUrl}`;
+					if (data.length > lastLogLength) {
+						const newContent = data.substring(lastLogLength);
+						lastLogLength = data.length;
+						newContent.split('\n').forEach(line => {
+							if (line.trim() !== '') {
+								logToFile(`${line}`, socket.id);
+								socket.emit('consoleMessage', `${line}`);
+							}
+						});
+					}
 
-                exec(downloadCommand, (error, stdout, stderr) => {
-                  if (error) {
-                    logToFile(`Erreur download ${fileName}: ${stderr}`, socket.id);
-                    socket.emit('consoleMessage', `Erreur download ${fileName}: ${stderr}`);
-                  } else {
-                    logToFile(`Fichier téléchargé: ${newFileName}`, socket.id);
-                    socket.emit('consoleMessage', `Fichier OK: ${newFileName}`);
-                    socket.emit('outputResultOpal', newFileName);
-                  }
-                });
-              });
-            } else {
-              socket.emit('consoleMessage', 'Aucun fichier trouvé');
-            }
-          } else if (data.includes('Snakemake pipeline failed')) {
-            socket.emit('consoleMessage', `${jobId} Pipeline failed`);
-          } else {
-            setTimeout(checkLog, 500);
-          }
-        });
-      }).on('error', err => {
-        logToFile('Erreur checkLog: ' + err, socket.id);
-      });
-    }
+					const outputSection = data.split('\n').find(line =>
+						line.includes("Checking expected output files:")
+					);
+
+					if (outputSection) {
+						const fileLines = data.split('\n').filter(line =>
+							outputExtensions.some(ext => line.trim().endsWith(ext))
+						);
+
+						logToFile(`Fichiers trouvés: ${fileLines}`, socket.id);
+
+						if (fileLines.length > 0) {
+							fileLines.forEach((fileName) => {
+								fileName = fileName.trim();
+
+								// petit garde-fou sur le nom de fichier
+								const safeFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+								const outputFileUrl = `http://io-biomaj.meso.umontpellier.fr:8080/opal-jobs/${jobId}/${encodeURIComponent(fileName)}`;
+								const newFileName = path.join(toolkitAnalysisDir, safeFileName);
+
+								downloadFile(outputFileUrl, newFileName, (err) => {
+								if (err) {
+									logToFile(`Erreur download ${fileName}: ${err.message}`, socket.id);
+									socket.emit('consoleMessage', `Erreur download ${fileName}: ${err.message}`);
+								} else {
+									logToFile(`Fichier téléchargé: ${newFileName}`, socket.id);
+									socket.emit('consoleMessage', `Fichier OK: ${newFileName}`);
+									socket.emit('outputResultOpal', newFileName);
+								}
+								});
+							});
+						} else {
+							socket.emit('consoleMessage', 'Aucun fichier trouvé');
+						}
+					} else if (data.includes('Snakemake pipeline failed')) {
+						socket.emit('consoleMessage', `${jobId} Pipeline failed`);
+					} else {
+						setTimeout(checkLog, 500);
+					}
+				});
+			}).on('error', err => {
+				logToFile('Erreur checkLog: ' + err, socket.id);
+			});
+		}
     
     checkLog();
   },
