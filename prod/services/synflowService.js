@@ -297,6 +297,21 @@ module.exports = {
         this.handleGalaxy(socket, serviceData, uploadedFiles, params, toolkitAnalysisDir);
       }
     });
+
+    // metric
+    socket.on('metric', (metric) => {
+      logToFile(`Receive metric : ${JSON.stringify(metric)}`, socket.id);
+
+      //log to metrics.log
+      const metricFile = path.join(toolkitWorkingPath, `metrics.log`);
+      fs.appendFile(metricFile, JSON.stringify(metric) + '\n', (err) => {
+        if (err) {
+          logToFile(`Error writing metric: ${err}`, socket.id);
+        } else {
+          logToFile(`Metric saved: ${JSON.stringify(metric)}`, socket.id);
+        }
+      });
+    });
   },
 
   handleOpal(socket, serviceData, uploadedFiles, params, toolkitAnalysisDir) {
