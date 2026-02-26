@@ -14,6 +14,6 @@
   },
   "devDependencies": {
     "multer": "^2.0.2",
-    "nodemon": "^2.0.22"
+    "nodemon": "^3.1.14"
   }
 }
