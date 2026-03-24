@@ -5,3 +5,4 @@ logs/*
 prod/node_modules/*
 prod/tmp/*
 prod/server.log
+prod/services/gemoService.js
