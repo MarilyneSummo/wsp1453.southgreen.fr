@@ -14,12 +14,12 @@
     <script>
         const socket = io('https://wsp1453.southgreen.fr:1453', {
             transports: ['websocket'], // Force WebSocket (pas polling)
-            rejectUnauthorized: false  // Ignore certificat auto-signé
+            // rejectUnauthorized: false  // Ignore certificat auto-signé
         });
         
         socket.on('connect', () => {
             document.getElementById('status').innerHTML = 
-                'CONNECTÉ ! ID: ' + socket.id;
+                'CONNECTED ! ID: ' + socket.id;
             console.log('Socket.IO connecté');
         });
         

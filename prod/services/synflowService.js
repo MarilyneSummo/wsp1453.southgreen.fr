@@ -11,6 +11,31 @@ const { logToFile, getCurrentTimestamp } = require('../utils/logger');
 const toolkitWorkingPath = '/opt/www/synflow.southgreen.fr/prod/tmp/toolkit_run/';
 const uploadRouter = express.Router();
 
+const sendmail = require('sendmail')({
+	logger: {
+		debug: console.log,
+		info: console.info,
+		warn: console.warn,
+		error: console.error
+	},
+	silent: false,
+	devHost: 'localhost', // Default: localhost
+	smtpPort: 25, // Default: 25
+	smtpHost: 'smtp.cirad.fr' // Default: -1 - extra smtp host after resolveMX
+})
+
+function sendMail(email, subject, message) {
+  sendmail({
+    from: 'marilyne.summo@cirad.fr',
+    to: email,
+    subject: subject,
+    html: message,
+  }, function(err, reply) {
+    console.log(err && err.stack);
+    console.dir(reply);
+  });
+}
+
 // Middleware assignUploadId
 function assignUploadId(req, res, next) {
     if (!req.uploadId) {
@@ -39,14 +64,14 @@ function validateFileContent(filePath, originalName) {
         fs.closeSync(fd);
         head = buf.toString('utf8', 0, bytesRead);
     } catch (e) {
-        logToFile(`Erreur lecture head ${originalName}: ${e.message}`, uploadId);
+        logToFile(`Erreur lecture head ${originalName}: ${e.message}`);
         return false;
     }
 
     // Patterns dangereux
     const dangerousPatterns = /<script|javascript:|eval\s*\(|import\s+|require\s*\(|exec\s*\(/i;
     if (dangerousPatterns.test(head)) {
-        logToFile(`Rejet malveillant: ${originalName}`, uploadId);
+        logToFile(`Rejet malveillant: ${originalName}`);
         return false;
     }
 
@@ -340,6 +365,7 @@ module.exports = {
 
     // buildOpalLaunchCommand (code original)
     function buildOpalLaunchCommand(serviceData, uploadedFiles, params) {
+
       const { url, action, arguments: argmts } = serviceData;
       const inputs = argmts.inputs;
       if (!inputs) throw new Error("Les 'inputs' ne sont pas définis");
@@ -347,7 +373,10 @@ module.exports = {
       let aArgs = "";
       let filePaths = [];
 
+      const processedInputNames = new Set();
+      
       inputs.forEach(input => {
+        processedInputNames.add(input.name);
         logToFile(`Input: ${input.name} type ${input.type} flag ${input.flag}`, socket.id);
         if (input.flag) {
           if (input.type !== "file" && input.type !== "file[]") {
@@ -367,12 +396,27 @@ module.exports = {
         }
       });
 
+      // Traiter les paramètres avancés non définis dans les inputs
+      // Traiter les paramètres avancés non définis dans les inputs
+      const systemParams = ['email', 'workflow', 'gff'];
+      Object.keys(params).forEach(key => {
+        if (!processedInputNames.has(key) && !systemParams.includes(key)) {
+          const value = params[key];
+          if (value && value !== "") {
+            // Convertir le nom du paramètre en format flag (ex: min_length_cluster)
+            const flagName = '--' + key;
+            aArgs += ` ${flagName} ${value}`;
+            logToFile(`Advanced parameter: ${flagName} = ${value}`, socket.id);
+          }
+        }
+      });
+
       const args = ['-r', action, '-l', url];
       if (aArgs.trim()) args.push('-a', aArgs.trim());
       filePaths.forEach(filePath => args.push('-f', filePath));
 
       return {
-        binary: 'python2',
+        binary: '/opt/python2/bin/python2',
         args: ['/opt/OpalPythonClient/opal-py-2.4.1/GenericServiceClient.py', ...args]
       };
     }
@@ -388,7 +432,6 @@ module.exports = {
         socket.emit('consoleMessage', `Erreur: ${error}`);
         return;
       }
-
       logToFile(`stdout: ${stdout}`, socket.id);
       socket.emit('consoleMessage', 'Lancement en cours...');
       socket.emit('consoleMessage', `Sortie: ${stdout}`);
@@ -400,16 +443,18 @@ module.exports = {
         socket.emit('toolkitPath', toolkitAnalysisDir);
 
         const logURL = `http://io-biomaj.meso.umontpellier.fr:8080/opal-jobs/${jobId}/stdout.txt`;
+        const stderrUrl = `http://io-biomaj.meso.umontpellier.fr:8080/opal-jobs/${jobId}/stderr.out`;
         logToFile(`Log URL: ${logURL}`, socket.id);
+        logToFile(`Stderr URL: ${stderrUrl}`, socket.id);
 
-        this.waitForOutputFiles(socket, logURL, ['.out', '.bed', '.anchors'], jobId, toolkitAnalysisDir);
+        this.waitForOutputFiles(socket, logURL, stderrUrl, ['.out', '.bed', '.anchors'], jobId, toolkitAnalysisDir, params.email);
       } else {
         socket.emit('consoleMessage', "Pas d'ID job");
       }
     });
   },
 
-	waitForOutputFiles(socket, logURL, outputExtensions, jobId, toolkitAnalysisDir) {
+	waitForOutputFiles(socket, logURL, stderrUrl, outputExtensions, jobId, toolkitAnalysisDir, email) {
 		let lastLogLength = 0;
 
 		function checkLog() {
@@ -464,6 +509,13 @@ module.exports = {
 									logToFile(`Fichier téléchargé: ${newFileName}`, socket.id);
 									socket.emit('consoleMessage', `Fichier OK: ${newFileName}`);
 									socket.emit('outputResultOpal', newFileName);
+                  const jobId = toolkitAnalysisDir.split('/').filter(x => x).pop();
+                  const resultsUrl = 'https://synflow.southgreen.fr/?id=' + jobId;
+                  const message = `Hello,<br/><br/>Your Synflow workflow has completed successfully.<br/><br/>You can view the results at the following address: <a href="${resultsUrl}">${resultsUrl}</a><br/><br/>Best regards,<br/>The Synflow team`;
+                  //si le mail est renseigné, on envoie un mail de notification
+                  if (email) {
+                    sendMail(email, 'Synflow notification', message);
+                  }
 								}
 								});
 							});
@@ -472,6 +524,11 @@ module.exports = {
 						}
 					} else if (data.includes('Snakemake pipeline failed')) {
 						socket.emit('consoleMessage', `${jobId} Pipeline failed`);
+            //si le mail est renseigné, on envoie un mail de notification
+            const message = `Hello,<br/><br/>Your Synflow workflow has failed. Please check the logs for more information.<br/><pre>${data}</pre><br/>Best regards,<br/>The Synflow team`;
+            if (email) {
+              sendMail(email, 'Synflow notification', message);
+            }
 					} else {
 						setTimeout(checkLog, 500);
 					}
@@ -482,6 +539,40 @@ module.exports = {
 		}
     
     checkLog();
+
+    //function to check stderr.out
+    function checkStderr() {
+      const urlObj = urlModule.parse(stderrUrl);
+      const lib = urlObj.protocol === 'https:' ? https : http;
+
+      lib.get(stderrUrl, res => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          if (res.statusCode === 404) {
+            setTimeout(() => checkStderr(socket, stderrUrl, jobId, toolkitAnalysisDir, email), 500);
+            return;
+          }
+
+          if (data.trim() !== '') {
+            logToFile(`stderr: ${data}`, socket.id);
+            socket.emit('consoleMessage', `Erreur: ${data}`);
+            //si le mail est renseigné, on envoie un mail de notification
+            const message = `Hello,<br/><br/>Your Synflow workflow has encountered an error. Please check the logs for more information.<br/><pre>${data}</pre><br/>Best regards,<br/>The Synflow team`;
+            if (email) {
+              sendMail(email, 'Synflow notification', message);
+            }
+          } else {
+            setTimeout(() => checkStderr(socket, stderrUrl, jobId, toolkitAnalysisDir, email), 500);
+          }
+        });
+      }).on('error', err => {
+        logToFile('Erreur checkStderr: ' + err, socket.id);
+      });
+    }
+    
+    checkStderr();
+
   },
 
   handleGalaxy(socket, serviceData, uploadedFiles, params, toolkitAnalysisDir) {
