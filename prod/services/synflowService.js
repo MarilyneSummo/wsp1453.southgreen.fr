@@ -39,7 +39,14 @@ function sendMail(email, subject, message) {
 // Middleware assignUploadId
 function assignUploadId(req, res, next) {
     if (!req.uploadId) {
-        req.uploadId = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        req.uploadId = Math.floor(Date.now() / 1000) + '-' + Math.random().toString(36).substr(2, 6);
+        const uploadDir = path.join(toolkitWorkingPath, req.uploadId);
+        try {
+            fs.mkdirSync(uploadDir, { recursive: true });
+            logToFile(`Dossier upload créé: ${uploadDir}`);
+        } catch (err) {
+            logToFile(`Erreur création dossier upload: ${err.message}`);
+        }
     }
     next();
 }
@@ -133,17 +140,15 @@ function downloadFile(outputFileUrl, destPath, cb) {
 // Configuration multer Synflow
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
-        cb(null, toolkitWorkingPath);
+        cb(null, path.join(toolkitWorkingPath, req.uploadId || 'unknown'));
     },
 	filename: function (req, file, cb) {
-		const prefix = req.uploadId || Date.now();
-		
 		// Protection originalname
 		const safeName = (file.originalname || 'unknown')
 			.replace(/[^a-zA-Z0-9._-]/g, '_')
 			.substring(0, 100);
 		
-		cb(null, `${prefix}_${safeName}`);
+		cb(null, safeName);
 	}
 });
 
@@ -229,7 +234,7 @@ uploadRouter.post('/upload', assignUploadId, upload.any(), (req, res) => {
 //Error handler Multer + Socket.IO
 uploadRouter.use((error, req, res, next) => {
     if (!req.uploadId) {
-        req.uploadId = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        req.uploadId = Math.floor(Date.now() / 1000) + '-' + Math.random().toString(36).substr(2, 6);
     }
     
     // Multer errors (taille, type, etc.)
