@@ -89,7 +89,7 @@ io.on('connection', socket => {
     }
 
     // Crée ET passe le répertoire GEMO au service
-    const gemoAnalysisDir = '/opt/www/wsp1453.southgreen.fr/prod/tmp/gemo_run/gemo_' + socket.id + '/';
+    const gemoAnalysisDir = '/opt/www/gemo.southgreen.fr/prod/tmp/gemo_run/gemo_' + socket.id + '/';
     try {
     fs.mkdirSync(gemoAnalysisDir);
     logToFile(`Répertoire GEMO créé : ${gemoAnalysisDir}`, socket.id);

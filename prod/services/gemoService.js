@@ -1,5 +1,5 @@
 const fs = require('fs');
-const { exec } = require('child_process');
+const { execFile } = require('child_process');
 const path = require('path');
 const { logToFile } = require('../utils/logger');
 
@@ -8,26 +8,21 @@ const workingPath = '/opt/www/wsp1453.southgreen.fr/prod/tmp/gemo_run/';
 
 module.exports = {
   attachHandlers(socket, analysisDir) {
-    const realAnalysisDir = analysisDir || '/tmp/fallback/';
+    const realAnalysisDir = path.resolve(analysisDir || '/tmp/fallback/');
     
     socket.on('run', (tsv, callback) => {
       logToFile("run tsv", socket.id);
       
-      fs.writeFile(realAnalysisDir + 'musa-acuminata.tsv', tsv, {encoding:'utf8', flag : 'w+' }, function (err) {
+      fs.writeFile(path.join(realAnalysisDir, 'musa-acuminata.tsv'), tsv, {encoding:'utf8', flag : 'w+' }, function (err) {
         if (err) return logToFile("error write file "+err, socket.id);
         
         logToFile("musa-acuminata.tsv uploaded to : "+realAnalysisDir, socket.id);
         
-        try {
-          process.chdir(realAnalysisDir);
-          logToFile(`New directory: ${process.cwd()}`, socket.id);
-        } catch (err) {
-          logToFile(`chdir: ${err}`, socket.id);
-        }
-        
-        exec(`python3 ${progPath}convert_band_data_socket.py`, (error, stdout, stderr) => {
-          logToFile(`python ${progPath}convert_band_data_socket.py`, socket.id);
+        const pythonScript = path.join(progPath, 'convert_band_data_socket.py');
+        execFile('python3', [pythonScript], { cwd: realAnalysisDir }, (error, stdout, stderr) => {
+          logToFile(`execFile python3 ${pythonScript}`, socket.id);
           if (error) logToFile(`exec error: ${error}`, socket.id);
+          if (stderr) logToFile(`stderr: ${stderr}`, socket.id);
           logToFile(`stdout: ${stdout}`, socket.id);
           callback(null, socket.id);
         });
@@ -44,21 +39,25 @@ module.exports = {
       ];
       var id = components.join("");
       
-      fs.mkdirSync(realAnalysisDir + id);
+      const idDir = path.join(realAnalysisDir, id);
+      fs.mkdirSync(idDir);
       
-      fs.writeFile(realAnalysisDir + id + '/annot.txt', annot.join("\n"), {encoding:'utf8', flag : 'w+' }, function (err) {
+      fs.writeFile(path.join(idDir, 'annot.txt'), annot.join("\n"), {encoding:'utf8', flag : 'w+' }, function (err) {
         if (err) return logToFile("error write file "+err, socket.id);
-        logToFile(realAnalysisDir + id + '/annot.txt saved', socket.id);
+        logToFile(path.join(idDir, 'annot.txt') + ' saved', socket.id);
       });
       
-      fs.writeFile(realAnalysisDir + id + '/color.txt', color, {encoding:'utf8', flag : 'w+' }, function (err) {
+      fs.writeFile(path.join(idDir, 'color.txt'), color, {encoding:'utf8', flag : 'w+' }, function (err) {
         if (err) return logToFile("error write file "+err, socket.id);
-        logToFile(realAnalysisDir + id + '/color.txt saved', socket.id);
+        logToFile(path.join(idDir, 'color.txt') + ' saved', socket.id);
       });
       
-      exec(`perl ${progPath}gemo2gff.pl ${ploidy} ${id}/annot.txt ${id}/color.txt ${id}/`, (error, stdout, stderr) => {
-        logToFile(`${progPath}gemo2gff.pl ${id}/annot.txt ${id}/color.txt ${id}/`, socket.id);
+      const perlScript = path.join(progPath, 'gemo2gff.pl');
+      const perlArgs = [String(ploidy), path.join(id, 'annot.txt'), path.join(id, 'color.txt'), `${id}/`];
+      execFile('perl', [perlScript, ...perlArgs], { cwd: realAnalysisDir }, (error, stdout, stderr) => {
+        logToFile(`execFile perl ${perlScript} ${perlArgs.join(' ')}`, socket.id);
         if (error) logToFile(`exec error: ${error}`, socket.id);
+        if (stderr) logToFile(`stderr: ${stderr}`, socket.id);
         logToFile(`stdout: ${stdout}`, socket.id);
         
         let trackURL = "";
@@ -67,7 +66,7 @@ module.exports = {
         let index = 0;
         let first = true;
         
-        fs.readdir(realAnalysisDir + id, (err, files) => {
+        fs.readdir(path.join(realAnalysisDir, id), (err, files) => {
           if (err) logToFile(err, socket.id);
           else {
             logToFile("\nCurrent gff files:", socket.id);
