@@ -124,6 +124,11 @@ io.on('connection', socket => {
                     var stats = fs.lstatSync(entry_path);
                     var mtime = stats.mtime.getTime();
 
+                    // Ne pas supprimer le fichier "metrics"
+                    if (entry === 'metrics.log') {
+                        return;
+                    }
+
                     if ((now - mtime) > TEN_DAYS_MS) {
                         if (stats.isDirectory()) {
                             rimraf(entry_path);

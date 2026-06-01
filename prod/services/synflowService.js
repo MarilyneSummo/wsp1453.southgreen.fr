@@ -6,9 +6,11 @@ const https = require('https');
 const urlModule = require('url');
 const express = require('express'); 
 const multer = require('multer');
+const archiver = require('archiver');
 const { logToFile, getCurrentTimestamp } = require('../utils/logger');
 
 const toolkitWorkingPath = '/opt/www/synflow.southgreen.fr/prod/tmp/toolkit_run/';
+const metricsFilePath = '/opt/www/synflow.southgreen.fr/prod/metrics.log';
 const uploadRouter = express.Router();
 
 const sendmail = require('sendmail')({
@@ -230,6 +232,49 @@ uploadRouter.post('/upload', assignUploadId, upload.any(), (req, res) => {
     });
 });
 
+// Endpoint pour télécharger les fichiers de sortie du toolkit en ZIP
+uploadRouter.get('/download-toolkit/:toolkitID', (req, res) => {
+    const toolkitID = req.params.toolkitID;
+    const dir = path.join(toolkitWorkingPath, toolkitID);
+    
+    // Vérifier que le dossier existe
+    if (!fs.existsSync(dir)) {
+        return res.status(404).send('Toolkit directory not found');
+    }
+    
+    // Lire les fichiers et filtrer les extensions valides
+    const files = fs.readdirSync(dir);
+    const validExtensions = ['.out', '.bed', '.anchors'];
+    const outputFiles = files.filter(file => 
+        validExtensions.some(ext => file.endsWith(ext))
+    );
+    
+    if (outputFiles.length === 0) {
+        return res.status(404).send('No output files found');
+    }
+    
+    // Configurer le ZIP
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${toolkitID}_output.zip"`);
+    
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    
+    archive.on('error', (err) => {
+        console.error('Archive error:', err);
+        res.status(500).send('Error creating archive');
+    });
+    
+    archive.pipe(res);
+    
+    // Ajouter chaque fichier au ZIP
+    outputFiles.forEach(file => {
+        const filePath = path.join(dir, file);
+        archive.file(filePath, { name: file });
+    });
+    
+    archive.finalize();
+});
+
 
 //Error handler Multer + Socket.IO
 uploadRouter.use((error, req, res, next) => {
@@ -333,8 +378,8 @@ module.exports = {
       logToFile(`Receive metric : ${JSON.stringify(metric)}`, socket.id);
 
       //log to metrics.log
-      const metricFile = path.join(toolkitWorkingPath, `metrics.log`);
-      fs.appendFile(metricFile, JSON.stringify(metric) + '\n', (err) => {
+      // le fichier est là : /opt/www/synflow.southgreen.fr/prod/metrics.log
+      fs.appendFile(metricsFilePath, JSON.stringify(metric) + '\n', (err) => {
         if (err) {
           logToFile(`Error writing metric: ${err}`, socket.id);
         } else {
