@@ -294,7 +294,12 @@ uploadRouter.get("/download-toolkit/:toolkitID", (req, res) => {
 		validExtensions.some((ext) => file.endsWith(ext)),
 	);
 
-	if (outputFiles.length === 0) {
+	// Logs à inclure dans le ZIP
+	const logFiles = ["stdout.log", "stderr.log"].filter((logFile) =>
+		fs.existsSync(path.join(dir, logFile)),
+	);
+
+	if (outputFiles.length === 0 && logFiles.length === 0) {
 		return res.status(404).send("No output files found");
 	}
 
@@ -314,10 +319,16 @@ uploadRouter.get("/download-toolkit/:toolkitID", (req, res) => {
 
 	archive.pipe(res);
 
-	// Ajouter chaque fichier au ZIP
+	// Ajouter chaque fichier de sortie au ZIP
 	outputFiles.forEach((file) => {
 		const filePath = path.join(dir, file);
 		archive.file(filePath, { name: file });
+	});
+
+	// Ajouter les logs au ZIP
+	logFiles.forEach((logFile) => {
+		const filePath = path.join(dir, logFile);
+		archive.file(filePath, { name: logFile });
 	});
 
 	archive.finalize();
@@ -627,6 +638,19 @@ module.exports = {
 		let lastLogLength = 0;
 		let stdoutData = "";
 		let stderrData = "";
+		let logsSaved = false;
+
+		function saveLogs() {
+			if (logsSaved) return;
+			logsSaved = true;
+			try {
+				fs.writeFileSync(path.join(toolkitAnalysisDir, "stdout.log"), stdoutData);
+				fs.writeFileSync(path.join(toolkitAnalysisDir, "stderr.log"), stderrData);
+				logToFile("Logs sauvegardés dans le répertoire toolkit", socket.id);
+			} catch (err) {
+				logToFile(`Erreur sauvegarde logs: ${err.message}`, socket.id);
+			}
+		}
 
 		function checkLog() {
 			const urlObj = urlModule.parse(logURL);
@@ -703,6 +727,7 @@ module.exports = {
 												`Fichier OK: ${newFileName}`,
 											);
 											socket.emit("outputResultOpal", newFileName);
+											saveLogs();
 											const jobId = toolkitAnalysisDir
 												.split("/")
 												.filter((x) => x)
@@ -725,6 +750,7 @@ module.exports = {
 							}
 						} else if (data.includes("Snakemake pipeline failed")) {
 							socket.emit("consoleMessage", `${jobId} Pipeline failed`);
+							saveLogs();
 							//si le mail est renseigné, on envoie un mail de notification
 							const failedJobId = toolkitAnalysisDir
 								.split("/")
@@ -778,6 +804,7 @@ module.exports = {
 						if (data.trim() !== "") {
 							logToFile(`stderr: ${data}`, socket.id);
 							socket.emit("consoleMessage", `Erreur: ${data}`);
+							saveLogs();
 							//si le mail est renseigné, on envoie un mail de notification
 							const errJobId = toolkitAnalysisDir
 								.split("/")
