@@ -100,6 +100,10 @@ io.on('connection', socket => {
     // ATTACHE les handlers GEMO
     gemoService.attachHandlers(socket, gemoAnalysisDir);
 
+    // ATTACHE les handlers GELOC
+    const gelocService = require('./services/gelocService');
+    gelocService.attachHandlers(socket);
+
     // ATTACHE les handlers synflow
     const synflowService = require('./services/synflowService');
     app.use(synflowService.router);  // Monte la route /upload Synflow
